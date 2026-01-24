@@ -1,0 +1,103 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Created by .ignore support plugin (hsz.mobi)
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.flutter/
+.fvm/
+.vscode/
+.idea/
+.cmake/
+*.swp
+*.swo
+*~
+*.log
+*.lock
+*.pid
+*.seed
+*.pid.lock
+*.tsbuildinfo
+.env  # Важно: исключаем .env файл с ключами
+.env.*
+!.env.example
+
+# Web related
+lib/generated_plugin_registrant.dart
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Exclude build outputs
+build/
+ios/.generated/
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/App.framework/
+ios/Runner/GeneratedPluginRegistrant.*
+ios/Pods/
+pubspec.lock
