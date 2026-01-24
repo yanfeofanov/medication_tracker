@@ -1,5 +1,4 @@
 // lib/screens/home_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
@@ -7,7 +6,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../controllers/medication_controller.dart';
 import '../models/medication_record.dart';
+import '../models/medication.dart';
 import '../widgets/stats_card.dart';
+import 'medications_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -41,6 +42,14 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Medication Tracker'),
         actions: [
+          // Кнопка перехода к препаратам
+          IconButton(
+            icon: const Icon(Icons.medication),
+            onPressed: () {
+              Get.to(() => const MedicationsScreen());
+            },
+            tooltip: 'Мои препараты',
+          ),
           // Кнопка добавления старой записи
           IconButton(
             icon: const Icon(Icons.calendar_today),
@@ -95,6 +104,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 await Supabase.instance.client.auth.signOut();
               } else if (value == 'refresh') {
                 await _controller.fetchRecords();
+                await _controller.fetchMedications();
               } else if (value == 'stats') {
                 _showStatisticsDialog();
               } else if (value == 'injections') {
@@ -221,7 +231,6 @@ class _HomeScreenState extends State<HomeScreen> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
-
             // Прогресс таблеток
             Obx(() {
               final pillsLeft = _controller.pillsLeft;
@@ -261,14 +270,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               );
             }),
-
             const SizedBox(height: 16),
-
             // Статистика уколов
             Obx(() {
               final injectionCount = _controller.injectionCount;
               final injectionProgress = _controller.injectionProgress;
-
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -306,14 +312,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               );
             }),
-
             const SizedBox(height: 16),
-
             // Следующий укол
             Obx(() {
               final nextInjection = _controller.nextInjectionDate;
               final daysUntil = _controller.daysUntilNextInjection;
-
               if (nextInjection == null) {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -413,6 +416,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showAddOldRecordDialog() {
     DateTime selectedDate = DateTime.now();
     MedicationType selectedType = MedicationType.pill;
+    Medication? selectedMedication;
     InjectionSite? selectedInjectionSite;
 
     showDialog(
@@ -439,13 +443,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         firstDate: DateTime(2023),
                         lastDate: DateTime.now(),
                       );
-
                       if (pickedDate != null) {
                         final pickedTime = await showTimePicker(
                           context: context,
                           initialTime: TimeOfDay.fromDateTime(selectedDate),
                         );
-
                         if (pickedTime != null) {
                           setState(() {
                             selectedDate = DateTime(
@@ -460,7 +462,45 @@ class _HomeScreenState extends State<HomeScreen> {
                       }
                     },
                   ),
+                  const SizedBox(height: 16),
 
+                  // Выбор препарата
+                  DropdownButtonFormField<Medication?>(
+                    value: selectedMedication,
+                    items: [
+                      const DropdownMenuItem(
+                        value: null,
+                        child: Text('Без препарата'),
+                      ),
+                      ..._controller.medications.map((med) {
+                        return DropdownMenuItem(
+                          value: med,
+                          child: Text(med.name),
+                        );
+                      }).toList(),
+                    ],
+                    onChanged: (value) {
+                      setState(() => selectedMedication = value);
+                      if (value != null) {
+                        // Автоматически выбираем тип препарата
+                        if (value.type == MedicationDbType.pill) {
+                          selectedType = MedicationType.pill;
+                        } else if (value.type == MedicationDbType.injection) {
+                          selectedType = MedicationType.injection;
+                        } else if (value.type == MedicationDbType.both) {
+                          selectedType = MedicationType.both;
+                        }
+                      }
+                    },
+                    decoration: const InputDecoration(
+                      labelText: 'Препарат (опционально)',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 16),
 
                   // Выбор типа
@@ -498,7 +538,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 16),
 
                   // Место укола (если нужно)
@@ -550,6 +589,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   _controller.addOldRecord(
                     type: selectedType,
                     dateTime: selectedDate,
+                    medication: selectedMedication,
                     injectionSite: selectedInjectionSite,
                   );
                   Navigator.pop(context);
@@ -578,6 +618,44 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 16),
 
+            // Выбор препарата
+            Obx(() {
+              final medications = _controller.getMedicationsByType(
+                _controller.selectedType.value,
+              );
+
+              if (medications.isNotEmpty) {
+                return DropdownButtonFormField<Medication?>(
+                  value: _controller.selectedMedication.value,
+                  items: [
+                    const DropdownMenuItem(
+                      value: null,
+                      child: Text('Без препарата'),
+                    ),
+                    ...medications.map((medication) {
+                      return DropdownMenuItem(
+                        value: medication,
+                        child: Text(medication.name),
+                      );
+                    }).toList(),
+                  ],
+                  onChanged: (value) {
+                    _controller.selectedMedication.value = value;
+                  },
+                  decoration: const InputDecoration(
+                    labelText: 'Препарат (опционально)',
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                );
+              }
+              return Container();
+            }),
+            const SizedBox(height: 12),
+
             // Тип медикамента
             DropdownButtonFormField<MedicationType>(
               value: _controller.selectedType.value,
@@ -596,11 +674,8 @@ class _HomeScreenState extends State<HomeScreen> {
               onChanged: (value) {
                 if (value != null) {
                   _controller.selectedType.value = value;
-                  // Сбрасываем место укола если не нужен
-                  if (value != MedicationType.injection &&
-                      value != MedicationType.both) {
-                    _controller.selectedInjectionSite.value = null;
-                  }
+                  // Сбрасываем выбранный препарат при смене типа
+                  _controller.selectedMedication.value = null;
                 }
               },
               decoration: const InputDecoration(
@@ -700,6 +775,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onRefresh: () => _controller.fetchRecords(),
         child: ListView.builder(
           controller: _historyScrollController,
+          physics: const AlwaysScrollableScrollPhysics(), // ← ДОБАВИТЬ
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           itemCount: _controller.records.length,
           itemBuilder: (context, index) {
@@ -728,9 +804,19 @@ class _HomeScreenState extends State<HomeScreen> {
             color: _getColorForType(record.medicationType),
           ),
         ),
-        title: Text(
-          record.medicationType.displayName,
-          style: const TextStyle(fontWeight: FontWeight.w600),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              record.medicationNameWithType,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            if (record.medication != null && record.medication!.dosage != null)
+              Text(
+                'Дозировка: ${record.medication!.dosage}',
+                style: const TextStyle(fontSize: 12),
+              ),
+          ],
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -807,7 +893,6 @@ class _HomeScreenState extends State<HomeScreen> {
           final injectionCount = _controller.injectionCount;
           final injectionProgress = _controller.injectionProgress;
           final nextInjection = _controller.nextInjectionDate;
-
           return Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,

@@ -1,6 +1,7 @@
 // lib/repositories/medication_repository.dart
 
 import 'package:intl/intl.dart';
+import 'package:medication_tracker/models/medication.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/medication_record.dart';
@@ -13,12 +14,22 @@ class MedicationRepository {
     try {
       final response = await _client
           .from('medication_records')
-          .select()
+          .select('*, medications!left(*)') // Используем left join
           .eq('user_id', userId)
-          .order('date_time', ascending: false);
+          .order('date_time', ascending: false)
+          .limit(100); // ← ОГРАНИЧИВАЕМ количество записей
 
       return response
-          .map((item) => MedicationRecord.fromMap(item))
+          .map((item) {
+            final record = MedicationRecord.fromMap(item);
+
+            // Если есть связанный препарат
+            if (item['medications'] != null && item['medications'] is Map) {
+              record.medication = Medication.fromMap(item['medications']);
+            }
+
+            return record;
+          })
           .toList()
           .cast<MedicationRecord>();
     } catch (e) {
@@ -102,6 +113,93 @@ class MedicationRepository {
     } catch (e) {
       print('Error getting records by day: $e');
       return {};
+    }
+  }
+
+  // Получить все препараты пользователя
+  Future<List<Medication>> getMedications(String userId) async {
+    try {
+      final response = await _client
+          .from('medications')
+          .select()
+          .eq('user_id', userId)
+          .order('name', ascending: true);
+
+      return response
+          .map((item) => Medication.fromMap(item))
+          .toList()
+          .cast<Medication>();
+    } catch (e) {
+      print('Error getting medications: $e');
+      rethrow;
+    }
+  }
+
+  // Получить препарат по ID
+  Future<Medication?> getMedicationById(String medicationId) async {
+    try {
+      final response = await _client
+          .from('medications')
+          .select()
+          .eq('id', medicationId)
+          .single();
+
+      return Medication.fromMap(response);
+    } catch (e) {
+      print('Error getting medication by id: $e');
+      return null;
+    }
+  }
+
+  // Добавить препарат
+  Future<Medication> addMedication(Medication medication) async {
+    try {
+      final response = await _client
+          .from('medications')
+          .insert(medication.toMap())
+          .select()
+          .single();
+
+      return Medication.fromMap(response);
+    } catch (e) {
+      print('Error adding medication: $e');
+      rethrow;
+    }
+  }
+
+  // Получить препараты по типу
+  Future<List<Medication>> getMedicationsByType(
+    String userId,
+    MedicationType type,
+  ) async {
+    try {
+      String dbType;
+      switch (type) {
+        case MedicationType.pill:
+          dbType = 'Таблетка';
+          break;
+        case MedicationType.injection:
+          dbType = 'Укол';
+          break;
+        case MedicationType.both:
+          dbType = 'Таблетка+укол';
+          break;
+      }
+
+      final response = await _client
+          .from('medications')
+          .select()
+          .eq('user_id', userId)
+          .eq('type', dbType)
+          .order('name', ascending: true);
+
+      return response
+          .map((item) => Medication.fromMap(item))
+          .toList()
+          .cast<Medication>();
+    } catch (e) {
+      print('Error getting medications by type: $e');
+      return [];
     }
   }
 }

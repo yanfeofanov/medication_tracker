@@ -1,6 +1,7 @@
 // lib/models/medication_record.dart
 
 import 'package:intl/intl.dart';
+import 'package:medication_tracker/models/medication.dart';
 
 enum MedicationType {
   pill('Таблетка', '💊'),
@@ -52,6 +53,8 @@ class MedicationRecord {
   final InjectionSite? injectionSite;
   final DateTime dateTime;
   final DateTime createdAt;
+  final String? medicationId; // Новая связь с препаратом
+  Medication? medication; // Объект препарата (будет загружаться отдельно)
 
   MedicationRecord({
     required this.id,
@@ -60,6 +63,8 @@ class MedicationRecord {
     this.injectionSite,
     required this.dateTime,
     required this.createdAt,
+    this.medicationId,
+    this.medication,
   });
 
   factory MedicationRecord.fromMap(Map<String, dynamic> map) {
@@ -74,6 +79,7 @@ class MedicationRecord {
       ),
       dateTime: DateTime.parse(map['date_time'] as String).toLocal(),
       createdAt: DateTime.parse(map['created_at'] as String).toLocal(),
+      medicationId: map['medication_id'] as String?,
     );
   }
 
@@ -83,12 +89,35 @@ class MedicationRecord {
       'medication_type': medicationType.toDbString(),
       'injection_site': injectionSite?.toDbString(),
       'date_time': dateTime.toUtc().toIso8601String(),
+      'medication_id': medicationId,
     };
   }
 
   String get formattedDate => DateFormat('dd.MM.yyyy HH:mm').format(dateTime);
   String get timeOnly => DateFormat('HH:mm').format(dateTime);
   String get dateOnly => DateFormat('dd.MM.yyyy').format(dateTime);
+
+  String get medicationName {
+    if (medication != null) {
+      return medication!.name;
+    }
+    // Запасной вариант если препарат не загружен
+    switch (medicationType) {
+      case MedicationType.pill:
+        return 'Таблетки';
+      case MedicationType.injection:
+        return 'Уколы';
+      case MedicationType.both:
+        return 'Таблетки и уколы';
+    }
+  }
+
+  String get medicationNameWithType {
+    if (medication != null) {
+      return '${medication!.name} (${medication!.displayType})';
+    }
+    return medicationType.displayName;
+  }
 
   // Проверка: можно ли принимать таблетку сегодня
   bool get canTakePillToday {

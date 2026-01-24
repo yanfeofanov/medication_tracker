@@ -1,5 +1,4 @@
 // lib/controllers/medication_controller.dart
-
 import 'dart:developer' as developer;
 
 import 'package:get/get.dart';
@@ -8,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 
 import '../models/medication_record.dart';
+import '../models/medication.dart';
 import '../repositories/medication_repository.dart';
 import '../services/supabase_service.dart';
 
@@ -17,9 +17,13 @@ class MedicationController extends GetxController {
   // Observable список записей
   final RxList<MedicationRecord> records = <MedicationRecord>[].obs;
 
+  // Observable список препаратов
+  final RxList<Medication> medications = <Medication>[].obs;
+
   // Observable переменные для формы
   final Rx<MedicationType> selectedType = MedicationType.pill.obs;
   final Rx<InjectionSite?> selectedInjectionSite = Rx<InjectionSite?>(null);
+  final Rx<Medication?> selectedMedication = Rx<Medication?>(null);
 
   // Observable флаг загрузки
   final RxBool isLoading = false.obs;
@@ -83,6 +87,7 @@ class MedicationController extends GetxController {
     print('🔄 MedicationController._loadData(): Начинаю загрузку данных');
     try {
       await fetchRecords();
+      await fetchMedications();
       _setupRealtimeUpdates();
       print('✅ MedicationController._loadData(): Данные успешно загружены');
     } catch (e, stackTrace) {
@@ -159,6 +164,41 @@ class MedicationController extends GetxController {
       }
       _channel = null;
     }
+  }
+
+  // Загрузить препараты пользователя
+  Future<void> fetchMedications() async {
+    try {
+      final userId = SupabaseService.userId;
+      if (userId == null || userId.isEmpty) {
+        medications.clear();
+        return;
+      }
+
+      final fetchedMedications = await _repository.getMedications(userId);
+      medications.assignAll(fetchedMedications);
+      print(
+        '✅ MedicationController.fetchMedications(): Загружено ${fetchedMedications.length} препаратов',
+      );
+    } catch (e) {
+      print('❌ MedicationController.fetchMedications(): Ошибка: $e');
+    }
+  }
+
+  // Получить препараты по типу
+  List<Medication> getMedicationsByType(MedicationType type) {
+    return medications.where((med) {
+      switch (type) {
+        case MedicationType.pill:
+          return med.type == MedicationDbType.pill ||
+              med.type == MedicationDbType.both;
+        case MedicationType.injection:
+          return med.type == MedicationDbType.injection ||
+              med.type == MedicationDbType.both;
+        case MedicationType.both:
+          return med.type == MedicationDbType.both;
+      }
+    }).toList();
   }
 
   // Проверка: можно ли принимать таблетку сегодня
@@ -271,8 +311,8 @@ class MedicationController extends GetxController {
     print('🔄 MedicationController.fetchRecords(): Начинаю загрузку записей');
     try {
       isLoading.value = true;
-      final userId = SupabaseService.userId;
 
+      final userId = SupabaseService.userId;
       if (userId == null || userId.isEmpty) {
         print(
           '⚠️ MedicationController.fetchRecords(): UserID пустой, очищаю записи',
@@ -340,6 +380,27 @@ class MedicationController extends GetxController {
         return;
       }
 
+      // Если выбран препарат, проверяем его тип
+      if (selectedMedication.value != null) {
+        final med = selectedMedication.value!;
+        if (!med.isPill && selectedType.value == MedicationType.pill) {
+          Get.snackbar(
+            'Ошибка',
+            'Этот препарат не предназначен для приема в виде таблеток',
+          );
+          return;
+        }
+        if (!med.isInjection &&
+            selectedType.value == MedicationType.injection) {
+          Get.snackbar('Ошибка', 'Этот препарат не предназначен для уколов');
+          return;
+        }
+        if (med.type == MedicationDbType.both &&
+            selectedType.value == MedicationType.both) {
+          // Для препаратов типа "оба" - можно и таблетку, и укол
+        }
+      }
+
       // Проверки в зависимости от типа медикамента
       bool canProceed = true;
 
@@ -380,6 +441,7 @@ class MedicationController extends GetxController {
         injectionSite: selectedInjectionSite.value,
         dateTime: DateTime.now(),
         createdAt: DateTime.now(),
+        medicationId: selectedMedication.value?.id,
       );
 
       await _repository.addRecord(record);
@@ -387,6 +449,7 @@ class MedicationController extends GetxController {
       // Сброс формы
       selectedType.value = MedicationType.pill;
       selectedInjectionSite.value = null;
+      selectedMedication.value = null;
 
       Get.snackbar(
         '✅ Успешно',
@@ -412,6 +475,7 @@ class MedicationController extends GetxController {
   Future<void> addOldRecord({
     required MedicationType type,
     required DateTime dateTime,
+    Medication? medication,
     InjectionSite? injectionSite,
   }) async {
     try {
@@ -437,6 +501,7 @@ class MedicationController extends GetxController {
         injectionSite: injectionSite,
         dateTime: dateTime,
         createdAt: DateTime.now(),
+        medicationId: medication?.id,
       );
 
       await _repository.addRecord(record);
@@ -482,7 +547,6 @@ class MedicationController extends GetxController {
 
   Map<String, List<MedicationRecord>> getRecordsByDay() {
     final Map<String, List<MedicationRecord>> recordsByDay = {};
-
     for (final record in records) {
       final day = record.dateOnly;
       recordsByDay.putIfAbsent(day, () => []).add(record);
