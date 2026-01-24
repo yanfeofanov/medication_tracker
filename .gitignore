@@ -74,7 +74,7 @@ app.*.map.json
 *.seed
 *.pid.lock
 *.tsbuildinfo
-.env  # Важно: исключаем .env файл с ключами
+.env
 .env.*
 !.env.example
 
