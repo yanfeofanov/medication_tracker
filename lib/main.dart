@@ -2,17 +2,20 @@
 
 import 'dart:async';
 import 'dart:developer' as developer;
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:medication_tracker/config.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
 import 'utils/keys.dart';
+import 'services/notification_service.dart';
+import 'services/local_storage_service.dart';
 
 Future<void> main() async {
   print('🚀 main(): Начало инициализации приложения');
-
   WidgetsFlutterBinding.ensureInitialized();
 
   try {
@@ -25,8 +28,12 @@ Future<void> main() async {
       url: SupabaseKeys.url,
       anonKey: SupabaseKeys.anonKey,
     );
-
     print('✅ main(): Supabase успешно инициализирован');
+
+    // Инициализация уведомлений
+    print('🔄 main(): Инициализация уведомлений...');
+    await NotificationService.initialize();
+    print('✅ main(): Уведомления успешно инициализированы');
   } catch (e, stackTrace) {
     print('❌ main(): ОШИБКА инициализации: $e');
     print('Stack trace: $stackTrace');
@@ -65,6 +72,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   bool _isInitializing = true;
   bool _isAuthenticated = false;
   String _userEmail = '';
+
   late StreamSubscription<AuthState> _authStateSubscription;
 
   @override
@@ -113,14 +121,37 @@ class _AuthWrapperState extends State<AuthWrapper> {
       print(
         '✅ Статус обновлен: авторизован: $_isAuthenticated, email: $_userEmail',
       );
+
+      // Если пользователь авторизован, синхронизируем дату укола
+      if (_isAuthenticated) {
+        await _syncInjectionDate();
+      }
     } catch (e, stackTrace) {
       print('❌ ОШИБКА проверки авторизации: $e');
       print('Stack trace: $stackTrace');
-
       setState(() {
         _isAuthenticated = false;
         _isInitializing = false;
       });
+    }
+  }
+
+  // Метод синхронизации даты следующего укола
+  Future<void> _syncInjectionDate() async {
+    try {
+      final storedDate = await LocalStorageService.getNextInjectionDate();
+      // Если дата есть в хранилище и она в прошлом
+      if (storedDate != null && storedDate.isBefore(DateTime.now())) {
+        // Обновляем дату на сегодня + интервал
+        await LocalStorageService.updateNextInjectionDate();
+        // Показываем уведомление
+        await NotificationService.showInstantNotification(
+          title: '💉 Время для укола',
+          body: 'Пора сделать укол согласно вашему графику',
+        );
+      }
+    } catch (e) {
+      print('Error syncing injection date: $e');
     }
   }
 

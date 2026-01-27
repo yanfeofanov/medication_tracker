@@ -1,8 +1,10 @@
 // lib/screens/medications_screen.dart
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:intl/intl.dart';
 import 'package:medication_tracker/controllers/medication_controller.dart';
 import 'package:medication_tracker/models/medication.dart';
+import 'package:medication_tracker/models/medication_course.dart';
 import 'package:medication_tracker/repositories/medication_repository.dart';
 import 'package:medication_tracker/services/supabase_service.dart';
 
@@ -293,14 +295,29 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
                               ),
                           ],
                         ),
-                        trailing: IconButton(
-                          icon: const Icon(
-                            Icons.delete_outline,
-                            color: Colors.red,
-                          ),
-                          onPressed: () {
-                            _showDeleteDialog(medication);
-                          },
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(
+                                Icons.settings,
+                                color: Colors.blue,
+                              ),
+                              onPressed: () {
+                                _showCourseSetupDialog(medication);
+                              },
+                              tooltip: 'Настроить курс лечения',
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                color: Colors.red,
+                              ),
+                              onPressed: () {
+                                _showDeleteDialog(medication);
+                              },
+                            ),
+                          ],
                         ),
                       ),
                     );
@@ -335,6 +352,262 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
             child: const Text('Удалить', style: TextStyle(color: Colors.red)),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showCourseSetupDialog(Medication medication) {
+    CourseDurationType _selectedDuration =
+        medication.defaultDurationType ?? CourseDurationType.month;
+    DateTime? _selectedCustomDate;
+    int _pillsPerDay = medication.defaultPillsPerDay ?? 1;
+    int _totalPills = medication.defaultTotalPills ?? 0;
+    bool _enableNotifications = medication.defaultHasNotifications ?? true;
+
+    // Новые переменные для уколов
+    InjectionFrequency _selectedInjectionFrequency =
+        InjectionFrequency.biweekly;
+    int _customInjectionInterval = 14;
+    bool _notifyDayBefore = true;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('⚙️ Настройка курса лечения'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Продолжительность курса
+                  DropdownButtonFormField<CourseDurationType>(
+                    value: _selectedDuration,
+                    items: CourseDurationType.values.map((type) {
+                      return DropdownMenuItem(
+                        value: type,
+                        child: Text(type.displayName),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => _selectedDuration = value);
+                      }
+                    },
+                    decoration: const InputDecoration(
+                      labelText: 'Продолжительность курса',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Выбор даты окончания (если выбран custom)
+                  if (_selectedDuration == CourseDurationType.custom)
+                    Column(
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.calendar_today),
+                          title: const Text('Дата окончания'),
+                          subtitle: Text(
+                            _selectedCustomDate != null
+                                ? DateFormat(
+                                    'dd.MM.yyyy',
+                                  ).format(_selectedCustomDate!)
+                                : 'Выберите дату',
+                          ),
+                          onTap: () async {
+                            final pickedDate = await showDatePicker(
+                              context: context,
+                              initialDate: DateTime.now().add(
+                                const Duration(days: 30),
+                              ),
+                              firstDate: DateTime.now(),
+                              lastDate: DateTime.now().add(
+                                const Duration(days: 365 * 5),
+                              ),
+                            );
+                            if (pickedDate != null) {
+                              setState(() => _selectedCustomDate = pickedDate);
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    ),
+
+                  // НАСТРОЙКИ ДЛЯ УКОЛОВ
+                  if (medication.type == MedicationDbType.injection ||
+                      medication.type == MedicationDbType.both)
+                    Column(
+                      children: [
+                        const Divider(),
+                        const Text(
+                          'Настройки уколов:',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Частота уколов
+                        DropdownButtonFormField<InjectionFrequency>(
+                          value: _selectedInjectionFrequency,
+                          items: InjectionFrequency.values.map((freq) {
+                            return DropdownMenuItem(
+                              value: freq,
+                              child: Text(freq.displayName),
+                            );
+                          }).toList(),
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(
+                                () => _selectedInjectionFrequency = value,
+                              );
+                            }
+                          },
+                          decoration: const InputDecoration(
+                            labelText: 'Частота уколов',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Кастомный интервал
+                        if (_selectedInjectionFrequency ==
+                            InjectionFrequency.custom)
+                          TextFormField(
+                            initialValue: _customInjectionInterval.toString(),
+                            decoration: const InputDecoration(
+                              labelText: 'Интервал (дней)',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.calendar_today),
+                            ),
+                            keyboardType: TextInputType.number,
+                            onChanged: (value) {
+                              final intValue = int.tryParse(value);
+                              if (intValue != null && intValue > 0) {
+                                setState(
+                                  () => _customInjectionInterval = intValue,
+                                );
+                              }
+                            },
+                          ),
+
+                        // Уведомление за день до
+                        SwitchListTile(
+                          title: const Text('Уведомлять за день до укола'),
+                          subtitle: const Text('Получить напоминание за день'),
+                          value: _notifyDayBefore,
+                          onChanged: (value) {
+                            setState(() => _notifyDayBefore = value);
+                          },
+                        ),
+                      ],
+                    ),
+
+                  // НАСТРОЙКИ ДЛЯ ТАБЛЕТОК
+                  if (medication.type == MedicationDbType.pill ||
+                      medication.type == MedicationDbType.both)
+                    Column(
+                      children: [
+                        const Divider(),
+                        const Text(
+                          'Настройки таблеток:',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Количество таблеток в день
+                        TextFormField(
+                          initialValue: _pillsPerDay.toString(),
+                          decoration: const InputDecoration(
+                            labelText: 'Таблеток в день',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.medication),
+                          ),
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) {
+                            final intValue = int.tryParse(value);
+                            if (intValue != null && intValue > 0) {
+                              setState(() => _pillsPerDay = intValue);
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Общее количество таблеток (для пожизненного приема)
+                        if (_selectedDuration == CourseDurationType.lifetime)
+                          TextFormField(
+                            initialValue: _totalPills.toString(),
+                            decoration: const InputDecoration(
+                              labelText: 'Общее количество таблеток',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.inventory),
+                            ),
+                            keyboardType: TextInputType.number,
+                            onChanged: (value) {
+                              final intValue = int.tryParse(value);
+                              if (intValue != null) {
+                                setState(() => _totalPills = intValue);
+                              }
+                            },
+                          ),
+                      ],
+                    ),
+
+                  // Общие уведомления
+                  SwitchListTile(
+                    title: const Text('Включить уведомления'),
+                    subtitle: const Text('Напоминания о приеме лекарства'),
+                    value: _enableNotifications,
+                    onChanged: (value) {
+                      setState(() => _enableNotifications = value);
+                    },
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Отмена'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (_selectedDuration == CourseDurationType.custom &&
+                      _selectedCustomDate == null) {
+                    Get.snackbar('Ошибка', 'Выберите дату окончания');
+                    return;
+                  }
+
+                  await _controller.createMedicationCourse(
+                    medicationId: medication.id,
+                    durationType: _selectedDuration,
+                    customEndDate: _selectedCustomDate,
+                    pillsPerDay: _pillsPerDay,
+                    totalPills: _totalPills,
+                    hasNotifications: _enableNotifications,
+                    // Новые параметры для уколов
+                    injectionFrequency:
+                        (medication.type == MedicationDbType.injection ||
+                            medication.type == MedicationDbType.both)
+                        ? _selectedInjectionFrequency
+                        : null,
+                    injectionIntervalDays: _customInjectionInterval,
+                    injectionNotifyDayBefore: _notifyDayBefore,
+                  );
+
+                  Navigator.pop(context);
+                },
+                child: const Text('Сохранить'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

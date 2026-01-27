@@ -1,8 +1,11 @@
 // lib/controllers/medication_controller.dart
+
 import 'dart:developer' as developer;
 
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
+import 'package:medication_tracker/models/medication_course.dart';
+import 'package:medication_tracker/services/notification_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 
@@ -19,6 +22,9 @@ class MedicationController extends GetxController {
 
   // Observable список препаратов
   final RxList<Medication> medications = <Medication>[].obs;
+
+  // Observable список курсов
+  final RxList<MedicationCourse> courses = <MedicationCourse>[].obs;
 
   // Observable переменные для формы
   final Rx<MedicationType> selectedType = MedicationType.pill.obs;
@@ -88,7 +94,9 @@ class MedicationController extends GetxController {
     try {
       await fetchRecords();
       await fetchMedications();
+      await fetchCourses(); // Добавляем загрузку курсов
       _setupRealtimeUpdates();
+      _updateProgress(); // Обновляем прогресс после загрузки всех данных
       print('✅ MedicationController._loadData(): Данные успешно загружены');
     } catch (e, stackTrace) {
       print('❌ MedicationController._loadData(): ОШИБКА загрузки данных: $e');
@@ -100,7 +108,6 @@ class MedicationController extends GetxController {
     print(
       '📡 MedicationController._setupRealtimeUpdates(): Настройка realtime обновлений',
     );
-
     final userId = SupabaseService.userId;
     if (userId == null || userId.isEmpty) {
       print(
@@ -108,7 +115,6 @@ class MedicationController extends GetxController {
       );
       return;
     }
-
     print('👤 MedicationController._setupRealtimeUpdates(): UserID: $userId');
 
     // Очищаем старый канал если есть
@@ -163,6 +169,253 @@ class MedicationController extends GetxController {
         );
       }
       _channel = null;
+    }
+  }
+
+  // Загрузить курсы лечения пользователя
+  Future<void> fetchCourses() async {
+    try {
+      final userId = SupabaseService.userId;
+      if (userId == null || userId.isEmpty) {
+        courses.clear();
+        return;
+      }
+
+      // Загружаем курсы для каждого препарата
+      final List<MedicationCourse> fetchedCourses = [];
+      for (final medication in medications) {
+        final course = await _repository.getMedicationCourse(medication.id);
+        if (course != null) {
+          fetchedCourses.add(course);
+        }
+      }
+
+      courses.assignAll(fetchedCourses);
+      print(
+        '✅ MedicationController.fetchCourses(): Загружено ${fetchedCourses.length} курсов',
+      );
+    } catch (e) {
+      print('❌ MedicationController.fetchCourses(): Ошибка: $e');
+    }
+  }
+
+  // Получить курс для препарата
+  Future<MedicationCourse?> getCourseForMedication(String medicationId) async {
+    try {
+      return await _repository.getMedicationCourse(medicationId);
+    } catch (e) {
+      print('Error getting course for medication: $e');
+      return null;
+    }
+  }
+
+  // Получить следующую дату укола для препарата
+  DateTime? getNextInjectionForMedication(String medicationId) {
+    try {
+      final course = courses.firstWhereOrNull(
+        (c) => c.medicationId == medicationId,
+      );
+
+      if (course == null) return null;
+
+      final medicationRecords = records
+          .where((r) => r.medicationId == medicationId)
+          .toList();
+
+      return course.getNextInjectionDate(medicationRecords);
+    } catch (e) {
+      print('Error getting next injection: $e');
+      return null;
+    }
+  }
+
+  // Создать курс для препарата
+  Future<void> createMedicationCourse({
+    required String medicationId,
+    required CourseDurationType durationType,
+    DateTime? customEndDate,
+    int pillsPerDay = 1,
+    int totalPills = 0,
+    bool hasNotifications = true,
+    // Новые параметры для уколов
+    InjectionFrequency? injectionFrequency,
+    int? injectionIntervalDays,
+    bool injectionNotifyDayBefore = true,
+  }) async {
+    try {
+      final userId = SupabaseService.userId;
+      if (userId == null) {
+        Get.snackbar('Ошибка', 'Пользователь не авторизован');
+        return;
+      }
+
+      final medication = medications.firstWhereOrNull(
+        (m) => m.id == medicationId,
+      );
+
+      if (medication == null) {
+        Get.snackbar('Ошибка', 'Препарат не найден');
+        return;
+      }
+
+      // Сначала получаем существующий курс
+      final existingCourse = await _repository.getMedicationCourse(
+        medicationId,
+      );
+
+      // Сохраняем оригинальную дату начала или используем текущую
+      DateTime startDate = existingCourse?.startDate ?? DateTime.now();
+
+      final course = MedicationCourse(
+        id: existingCourse?.id ?? '', // Используем существующий ID или пустой
+        userId: userId,
+        medicationId: medicationId,
+        startDate: startDate,
+        durationType: durationType,
+        customEndDate: customEndDate,
+        pillsPerDay:
+            (medication.type == MedicationDbType.pill ||
+                medication.type == MedicationDbType.both)
+            ? pillsPerDay
+            : null,
+        totalPills: totalPills,
+        hasNotifications: hasNotifications,
+        createdAt: existingCourse?.createdAt ?? DateTime.now(),
+        updatedAt: DateTime.now(),
+        // Новые параметры
+        injectionFrequency: injectionFrequency,
+        injectionIntervalDays: injectionIntervalDays,
+        injectionNotifyDayBefore: injectionNotifyDayBefore,
+      );
+
+      print('💾 MedicationController: Сохраняю курс для ${medication.name}');
+
+      final savedCourse = await _repository.saveMedicationCourse(course);
+
+      // Обновляем локальный список курсов
+      courses.removeWhere((c) => c.medicationId == medicationId);
+      courses.add(savedCourse);
+
+      // Обновляем прогресс
+      _updateProgress();
+
+      // Если включены уведомления, создаем их
+      if (hasNotifications) {
+        if (medication.type == MedicationDbType.pill ||
+            medication.type == MedicationDbType.both) {
+          await _setupMedicationNotifications(savedCourse);
+        }
+
+        if (medication.type == MedicationDbType.injection ||
+            medication.type == MedicationDbType.both) {
+          await NotificationService.scheduleInjectionNotifications(
+            savedCourse,
+            medication.name,
+          );
+        }
+      }
+
+      Get.snackbar(
+        '✅ Успешно',
+        existingCourse != null
+            ? 'Курс лечения обновлен'
+            : 'Курс лечения настроен',
+        backgroundColor: Colors.green,
+        colorText: Colors.white,
+      );
+    } catch (e, stackTrace) {
+      print('❌ Error creating medication course: $e');
+      print('Stack trace: $stackTrace');
+
+      Get.snackbar(
+        '❌ Ошибка',
+        'Не удалось сохранить курс. Ошибка: ${e.toString().contains('23505') ? 'Курс уже существует' : e.toString()}',
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
+        duration: const Duration(seconds: 5),
+      );
+    }
+  }
+
+  // Обновить курс после сохранения
+  Future<void> updateCourseAfterSave(String medicationId) async {
+    try {
+      // Обновляем курс из базы
+      final course = await _repository.getMedicationCourse(medicationId);
+      if (course != null) {
+        // Удаляем старый курс если есть
+        courses.removeWhere((c) => c.medicationId == medicationId);
+        courses.add(course);
+
+        // Обновляем прогресс
+        _updateProgress();
+
+        print('✅ MedicationController: Курс для $medicationId обновлен');
+      }
+    } catch (e) {
+      print('Error updating course: $e');
+    }
+  }
+
+  // Настройка уведомлений для курса
+  Future<void> _setupMedicationNotifications(MedicationCourse course) async {
+    try {
+      final medication = medications.firstWhereOrNull(
+        (m) => m.id == course.medicationId,
+      );
+      if (medication == null) return;
+
+      // Удаляем старые уведомления для этого препарата
+      await _cancelMedicationNotifications(course.medicationId);
+
+      // Создаем ежедневные уведомления только если есть pillsPerDay
+      if (course.pillsPerDay != null && course.pillsPerDay! > 0) {
+        for (int i = 0; i < course.pillsPerDay!; i++) {
+          // Например: уведомления в 9:00, 14:00, 20:00
+          final hour = i == 0 ? 9 : (i == 1 ? 14 : 20);
+          await NotificationService.scheduleDailyNotification(
+            id: '${course.medicationId}_$i',
+            title: '💊 Время принять лекарство',
+            body: 'Не забудьте принять ${medication.name}',
+            hour: hour,
+            minute: 0,
+            startDate: course.startDate,
+            endDate: course.endDate,
+          );
+        }
+      }
+    } catch (e) {
+      print('Error setting up notifications: $e');
+    }
+  }
+
+  // Отменить уведомления для препарата
+  Future<void> _cancelMedicationNotifications(String medicationId) async {
+    try {
+      await NotificationService.cancelAllNotificationsForMedication(
+        medicationId,
+      );
+    } catch (e) {
+      print('Error cancelling notifications: $e');
+    }
+  }
+
+  // Получить оставшиеся таблетки для препарата
+  int getPillsLeftForMedication(String medicationId) {
+    try {
+      final course = courses.firstWhereOrNull(
+        (c) => c.medicationId == medicationId,
+      );
+      if (course == null) return 0;
+
+      final medicationRecords = records
+          .where((r) => r.medicationId == medicationId)
+          .toList();
+
+      return course.calculatePillsLeft(medicationRecords);
+    } catch (e) {
+      print('Error getting pills left: $e');
+      return 0;
     }
   }
 
@@ -238,10 +491,8 @@ class MedicationController extends GetxController {
             ],
           ),
         );
-
         return confirmed ?? false;
       }
-
       return true;
     } catch (e) {
       print('Error checking pill: $e');
@@ -266,21 +517,48 @@ class MedicationController extends GetxController {
       // Сортируем по дате (последний первый)
       injectionRecords.sort((a, b) => b.dateTime.compareTo(a.dateTime));
       final lastInjection = injectionRecords.first;
-
       final today = DateTime.now();
       final daysSinceLastInjection = today
           .difference(lastInjection.dateTime)
           .inDays;
 
-      if (daysSinceLastInjection < 14) {
-        // Показываем предупреждение, если укол был менее 14 дней назад
+      // Проверяем курс лечения для этого препарата
+      final course = courses.firstWhereOrNull(
+        (c) => c.medicationId == lastInjection.medicationId,
+      );
+
+      int requiredInterval = 14; // По умолчанию 14 дней
+
+      if (course != null && course.injectionFrequency != null) {
+        // Определяем интервал на основе курса
+        switch (course.injectionFrequency!) {
+          case InjectionFrequency.daily:
+            requiredInterval = 1;
+            break;
+          case InjectionFrequency.weekly:
+            requiredInterval = 7;
+            break;
+          case InjectionFrequency.biweekly:
+            requiredInterval = 14;
+            break;
+          case InjectionFrequency.monthly:
+            requiredInterval = 30;
+            break;
+          case InjectionFrequency.custom:
+            requiredInterval = course.injectionIntervalDays ?? 14;
+            break;
+        }
+      }
+
+      if (daysSinceLastInjection < requiredInterval) {
+        // Показываем предупреждение, если укол был слишком рано
         final confirmed = await Get.dialog<bool>(
           AlertDialog(
             title: const Text('⚠️ Внимание'),
             content: Text(
               'Последний укол был ${lastInjection.formattedDate} '
-              '(${daysSinceLastInjection} дней назад).\n\n'
-              'Рекомендуемый интервал между уколами: 14 дней.\n'
+              '($daysSinceLastInjection дней назад).\n\n'
+              'Рекомендуемый интервал между уколами: $requiredInterval дней.\n'
               'Вы уверены, что хотите сделать укол сейчас?',
             ),
             actions: [
@@ -295,10 +573,8 @@ class MedicationController extends GetxController {
             ],
           ),
         );
-
         return confirmed ?? false;
       }
-
       return true;
     } catch (e) {
       print('Error checking injection: $e');
@@ -311,7 +587,6 @@ class MedicationController extends GetxController {
     print('🔄 MedicationController.fetchRecords(): Начинаю загрузку записей');
     try {
       isLoading.value = true;
-
       final userId = SupabaseService.userId;
       if (userId == null || userId.isEmpty) {
         print(
@@ -324,19 +599,9 @@ class MedicationController extends GetxController {
 
       final fetchedRecords = await _repository.getRecords(userId);
       records.assignAll(fetchedRecords);
-      _updateProgress();
 
       print(
         '✅ MedicationController.fetchRecords(): Загружено ${fetchedRecords.length} записей',
-      );
-      print(
-        '📊 MedicationController.fetchRecords(): Таблеток осталось: ${_pillsLeft.value}',
-      );
-      print(
-        '📊 MedicationController.fetchRecords(): Следующий укол: ${_nextInjectionDate.value}',
-      );
-      print(
-        '📊 MedicationController.fetchRecords(): Уколов выполнено: $injectionCount',
       );
     } catch (e, stackTrace) {
       print(
@@ -356,8 +621,52 @@ class MedicationController extends GetxController {
 
   // Обновление прогресса
   void _updateProgress() {
-    _pillsLeft.value = MedicationProgress.calculatePillsLeft(records);
-    _nextInjectionDate.value = MedicationProgress.getNextInjectionDate(records);
+    // Расчет оставшихся таблеток с учетом курсов лечения
+    int totalPillsLeft = 0;
+
+    // Считаем таблетки только для препаратов с типом pill или both
+    for (final medication in medications) {
+      if (medication.type == MedicationDbType.pill ||
+          medication.type == MedicationDbType.both) {
+        totalPillsLeft += getPillsLeftForMedication(medication.id);
+      }
+    }
+
+    _pillsLeft.value = totalPillsLeft;
+
+    // Новый расчет уколов - берем из курса лечения
+    final injectionCourses = courses.where((course) {
+      final medication = medications.firstWhereOrNull(
+        (m) => m.id == course.medicationId,
+      );
+      return medication != null &&
+          (medication.type == MedicationDbType.injection ||
+              medication.type == MedicationDbType.both);
+    }).toList();
+
+    if (injectionCourses.isNotEmpty) {
+      // Находим ближайший следующий укол среди всех препаратов
+      DateTime? nearestInjection;
+
+      for (final course in injectionCourses) {
+        final nextInjection = getNextInjectionForMedication(
+          course.medicationId,
+        );
+        if (nextInjection != null &&
+            (nearestInjection == null ||
+                nextInjection.isBefore(nearestInjection))) {
+          nearestInjection = nextInjection;
+        }
+      }
+
+      _nextInjectionDate.value = nearestInjection;
+    } else {
+      // Если нет курсов для уколов, используем старую логику
+      _nextInjectionDate.value = MedicationProgress.getNextInjectionDate(
+        records,
+      );
+    }
+
     _statusMessage.value = MedicationProgress.getStatusMessage(records);
     _pillsProgress.value = MedicationProgress.getPillsProgress(records);
 
@@ -403,7 +712,6 @@ class MedicationController extends GetxController {
 
       // Проверки в зависимости от типа медикамента
       bool canProceed = true;
-
       if (selectedType.value == MedicationType.pill) {
         canProceed = await _checkIfCanTakePillToday();
       } else if (selectedType.value == MedicationType.injection) {
@@ -460,6 +768,7 @@ class MedicationController extends GetxController {
 
       // Автоматически обновляем данные
       await fetchRecords();
+      _updateProgress(); // Обновляем прогресс
     } catch (e) {
       print('❌ Ошибка добавления записи: $e');
       Get.snackbar(
@@ -486,7 +795,6 @@ class MedicationController extends GetxController {
       }
 
       // Для старых записей проверки не делаем
-
       // Валидация для уколов
       if ((type == MedicationType.injection || type == MedicationType.both) &&
           injectionSite == null) {
@@ -514,6 +822,7 @@ class MedicationController extends GetxController {
       );
 
       await fetchRecords();
+      _updateProgress(); // Обновляем прогресс
     } catch (e) {
       print('❌ Ошибка добавления старой записи: $e');
       Get.snackbar(
@@ -535,6 +844,7 @@ class MedicationController extends GetxController {
         colorText: Colors.white,
       );
       await fetchRecords();
+      _updateProgress(); // Обновляем прогресс
     } catch (e) {
       Get.snackbar(
         '❌ Ошибка',
@@ -551,10 +861,8 @@ class MedicationController extends GetxController {
       final day = record.dateOnly;
       recordsByDay.putIfAbsent(day, () => []).add(record);
     }
-
     final sortedEntries = recordsByDay.entries.toList()
       ..sort((a, b) => b.key.compareTo(a.key));
-
     return Map.fromEntries(sortedEntries);
   }
 
