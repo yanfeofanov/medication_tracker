@@ -2,6 +2,7 @@
 
 import 'package:intl/intl.dart';
 import 'package:medication_tracker/models/medication.dart';
+import 'package:medication_tracker/models/medication_course.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/medication_record.dart';
@@ -200,6 +201,194 @@ class MedicationRepository {
     } catch (e) {
       print('Error getting medications by type: $e');
       return [];
+    }
+  }
+
+  // Получить курс для препарата
+  Future<MedicationCourse?> getMedicationCourse(String medicationId) async {
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) return null;
+
+      final response = await _client
+          .from('medication_courses')
+          .select()
+          .eq('medication_id', medicationId)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+      if (response == null) return null;
+
+      return MedicationCourse.fromMap(response);
+    } catch (e) {
+      print('Error getting medication course: $e');
+      return null;
+    }
+  }
+
+  // Создать или обновить курс для препарата (ИСПРАВЛЕННЫЙ МЕТОД)
+  Future<MedicationCourse> saveMedicationCourse(MedicationCourse course) async {
+    try {
+      print(
+        '💾 MedicationRepository.saveMedicationCourse(): Сохраняю курс для препарата ${course.medicationId}',
+      );
+
+      // Сначала проверяем, существует ли уже курс
+      final existingCourse = await getMedicationCourse(course.medicationId);
+
+      if (existingCourse != null) {
+        // Если курс уже существует, используем его ID
+        print('🔄 Обновляю существующий курс с ID: ${existingCourse.id}');
+
+        // Создаем обновленный курс с тем же ID
+        final updatedCourse = MedicationCourse(
+          id: existingCourse.id,
+          userId: course.userId,
+          medicationId: course.medicationId,
+          startDate: course.startDate,
+          durationType: course.durationType,
+          customEndDate: course.customEndDate,
+          pillsPerDay: course.pillsPerDay,
+          totalPills: course.totalPills,
+          hasNotifications: course.hasNotifications,
+          createdAt:
+              existingCourse.createdAt, // Сохраняем оригинальную дату создания
+          updatedAt: DateTime.now(),
+          injectionFrequency: course.injectionFrequency,
+          injectionIntervalDays: course.injectionIntervalDays,
+          injectionDaysOfWeek: course.injectionDaysOfWeek,
+          injectionNotifyDayBefore: course.injectionNotifyDayBefore,
+        );
+
+        print('📊 Данные для обновления: ${updatedCourse.toMap()}');
+
+        // Используем update вместо upsert для обновления существующего курса
+        final response = await _client
+            .from('medication_courses')
+            .update(updatedCourse.toMap())
+            .eq('id', existingCourse.id)
+            .select()
+            .single();
+
+        print('✅ Существующий курс успешно обновлен');
+        return MedicationCourse.fromMap(response);
+      } else {
+        // Если курс не существует, создаем новый
+        print('🆕 Создаю новый курс для препарата ${course.medicationId}');
+
+        final newCourse = MedicationCourse(
+          id: '',
+          userId: course.userId,
+          medicationId: course.medicationId,
+          startDate: course.startDate,
+          durationType: course.durationType,
+          customEndDate: course.customEndDate,
+          pillsPerDay: course.pillsPerDay,
+          totalPills: course.totalPills,
+          hasNotifications: course.hasNotifications,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+          injectionFrequency: course.injectionFrequency,
+          injectionIntervalDays: course.injectionIntervalDays,
+          injectionDaysOfWeek: course.injectionDaysOfWeek,
+          injectionNotifyDayBefore: course.injectionNotifyDayBefore,
+        );
+
+        print('📊 Данные для создания: ${newCourse.toMap()}');
+
+        final response = await _client
+            .from('medication_courses')
+            .insert(newCourse.toMap())
+            .select()
+            .single();
+
+        print('✅ Новый курс успешно создан');
+        return MedicationCourse.fromMap(response);
+      }
+    } catch (e) {
+      print('❌ Ошибка в MedicationRepository.saveMedicationCourse(): $e');
+
+      // Если возникает ошибка уникальности, пробуем альтернативный подход
+      if (e.toString().contains('23505') ||
+          e.toString().contains('duplicate')) {
+        print(
+          '🔄 Пробую альтернативный метод сохранения из-за ошибки уникальности...',
+        );
+        return await _saveMedicationCourseAlternative(course);
+      }
+
+      rethrow;
+    }
+  }
+
+  // Альтернативный метод сохранения курса
+  Future<MedicationCourse> _saveMedicationCourseAlternative(
+    MedicationCourse course,
+  ) async {
+    try {
+      print(
+        '🔄 _saveMedicationCourseAlternative: Пробую сохранить курс альтернативным методом',
+      );
+
+      // Получаем user_id
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) {
+        throw Exception('Пользователь не авторизован');
+      }
+
+      // Сначала пытаемся удалить существующий курс
+      try {
+        await _client
+            .from('medication_courses')
+            .delete()
+            .eq('medication_id', course.medicationId)
+            .eq('user_id', userId);
+        print('🗑️ Удален существующий курс перед созданием нового');
+      } catch (deleteError) {
+        print('ℹ️ Не удалось удалить существующий курс: $deleteError');
+        // Продолжаем в любом случае
+      }
+
+      // Создаем новый курс
+      final newCourse = MedicationCourse(
+        id: '',
+        userId: course.userId,
+        medicationId: course.medicationId,
+        startDate: course.startDate,
+        durationType: course.durationType,
+        customEndDate: course.customEndDate,
+        pillsPerDay: course.pillsPerDay,
+        totalPills: course.totalPills,
+        hasNotifications: course.hasNotifications,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+        injectionFrequency: course.injectionFrequency,
+        injectionIntervalDays: course.injectionIntervalDays,
+        injectionDaysOfWeek: course.injectionDaysOfWeek,
+        injectionNotifyDayBefore: course.injectionNotifyDayBefore,
+      );
+
+      final response = await _client
+          .from('medication_courses')
+          .insert(newCourse.toMap())
+          .select()
+          .single();
+
+      print('✅ Курс успешно сохранен альтернативным методом');
+      return MedicationCourse.fromMap(response);
+    } catch (e) {
+      print('❌ Ошибка в _saveMedicationCourseAlternative: $e');
+      rethrow;
+    }
+  }
+
+  // Удалить курс для препарата
+  Future<void> deleteMedicationCourse(String courseId) async {
+    try {
+      await _client.from('medication_courses').delete().eq('id', courseId);
+    } catch (e) {
+      print('Error deleting medication course: $e');
+      rethrow;
     }
   }
 }
