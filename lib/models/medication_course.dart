@@ -1,4 +1,5 @@
 // lib/models/medication_course.dart
+
 import 'package:intl/intl.dart';
 import 'package:medication_tracker/models/medication_record.dart';
 
@@ -59,7 +60,6 @@ class MedicationCourse {
     this.hasNotifications = true,
     required this.createdAt,
     required this.updatedAt,
-
     // Новые параметры
     this.injectionFrequency,
     this.injectionIntervalDays,
@@ -82,7 +82,6 @@ class MedicationCourse {
       hasNotifications: map['has_notifications'] as bool? ?? true,
       createdAt: DateTime.parse(map['created_at'] as String).toLocal(),
       updatedAt: DateTime.parse(map['updated_at'] as String).toLocal(),
-
       // Новые поля
       injectionFrequency: map['injection_frequency'] != null
           ? _injectionFrequencyFromString(map['injection_frequency'] as String)
@@ -140,13 +139,13 @@ class MedicationCourse {
     }
   }
 
-  static String _injectionFrequencyToString(InjectionFrequency? frequency) {
-    if (frequency == null) return '';
+  static String? _injectionFrequencyToString(InjectionFrequency? frequency) {
+    if (frequency == null) return null;
     return frequency.toString().split('.').last;
   }
 
   Map<String, dynamic> toMap() {
-    return {
+    final map = {
       'user_id': userId,
       'medication_id': medicationId,
       'start_date': startDate.toUtc().toIso8601String(),
@@ -155,13 +154,31 @@ class MedicationCourse {
       'pills_per_day': pillsPerDay,
       'total_pills': totalPills,
       'has_notifications': hasNotifications,
-
-      // Новые поля
-      'injection_frequency': _injectionFrequencyToString(injectionFrequency),
-      'injection_interval_days': injectionIntervalDays,
-      'injection_days_of_week': injectionDaysOfWeek?.join(','),
       'injection_notify_day_before': injectionNotifyDayBefore,
+      'updated_at': updatedAt.toUtc().toIso8601String(),
     };
+
+    // Добавляем поля для уколов только если они не null
+    if (injectionFrequency != null) {
+      map['injection_frequency'] = _injectionFrequencyToString(
+        injectionFrequency,
+      );
+    }
+
+    if (injectionIntervalDays != null) {
+      map['injection_interval_days'] = injectionIntervalDays;
+    }
+
+    if (injectionDaysOfWeek != null && injectionDaysOfWeek!.isNotEmpty) {
+      map['injection_days_of_week'] = injectionDaysOfWeek!.join(',');
+    }
+
+    // Добавляем created_at только для новых записей (когда id пустой)
+    if (id.isEmpty) {
+      map['created_at'] = createdAt.toUtc().toIso8601String();
+    }
+
+    return map;
   }
 
   // Рассчитать дату окончания курса
@@ -227,6 +244,7 @@ class MedicationCourse {
     // Для курсов с конечной датой
     final end = endDate;
     if (end == null || pillsPerDay == null) return 0;
+
     final now = DateTime.now();
     if (now.isAfter(end)) return 0;
 
@@ -280,11 +298,6 @@ class MedicationCourse {
           ..sort((a, b) => b.dateTime.compareTo(a.dateTime));
 
     if (lastInjection.isEmpty) {
-      // Если уколов не было, следующий - сегодня
-      return DateTime.now();
-    }
-
-    if (lastInjection.isEmpty) {
       // Если уколов не было, следующий - сегодня + интервал
       return _calculateFirstInjectionDate();
     }
@@ -331,17 +344,14 @@ class MedicationCourse {
     if (durationType == CourseDurationType.lifetime) {
       return 'Пожизненно';
     }
-
     final end = endDate;
     if (end == null) return 'Без срока';
-
     return 'До ${DateFormat('dd.MM.yyyy').format(end)}';
   }
 
   // Получить информацию о частоте уколов
   String get injectionInfo {
     if (injectionFrequency == null) return '';
-
     switch (injectionFrequency!) {
       case InjectionFrequency.daily:
         return 'Ежедневно';
@@ -355,4 +365,10 @@ class MedicationCourse {
         return 'Каждые ${injectionIntervalDays ?? 14} дней';
     }
   }
+
+  // Проверить, является ли курс для уколов
+  bool get isInjectionCourse => injectionFrequency != null;
+
+  // Проверить, является ли курс для таблеток
+  bool get isPillCourse => pillsPerDay != null && pillsPerDay! > 0;
 }

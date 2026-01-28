@@ -181,16 +181,10 @@ class MedicationController extends GetxController {
         return;
       }
 
-      // Загружаем курсы для каждого препарата
-      final List<MedicationCourse> fetchedCourses = [];
-      for (final medication in medications) {
-        final course = await _repository.getMedicationCourse(medication.id);
-        if (course != null) {
-          fetchedCourses.add(course);
-        }
-      }
-
+      // Используем новый метод репозитория
+      final fetchedCourses = await _repository.getAllCourses(userId);
       courses.assignAll(fetchedCourses);
+
       print(
         '✅ MedicationController.fetchCourses(): Загружено ${fetchedCourses.length} курсов',
       );
@@ -425,11 +419,16 @@ class MedicationController extends GetxController {
       final userId = SupabaseService.userId;
       if (userId == null || userId.isEmpty) {
         medications.clear();
+        courses.clear(); // Очищаем курсы тоже
         return;
       }
 
       final fetchedMedications = await _repository.getMedications(userId);
       medications.assignAll(fetchedMedications);
+
+      // Загружаем курсы для всех препаратов
+      await fetchCourses();
+
       print(
         '✅ MedicationController.fetchMedications(): Загружено ${fetchedMedications.length} препаратов',
       );

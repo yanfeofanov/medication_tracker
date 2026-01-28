@@ -1,4 +1,5 @@
 // lib/screens/home_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
@@ -28,6 +29,13 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     print('HomeScreen: initState called');
+
+    // Подписка на изменения курсов
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _controller.fetchCourses(); // Явно загружаем курсы
+      _controller.fetchMedications(); // И препараты
+      _controller.fetchRecords(); // И записи
+    });
   }
 
   @override
@@ -41,7 +49,7 @@ class _HomeScreenState extends State<HomeScreen> {
     print('HomeScreen: build called');
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Medication Tracker'),
+        title: const Text('Med Tracker'),
         actions: [
           // Кнопка перехода к препаратам
           IconButton(
@@ -106,6 +114,7 @@ class _HomeScreenState extends State<HomeScreen> {
               } else if (value == 'refresh') {
                 await _controller.fetchRecords();
                 await _controller.fetchMedications();
+                await _controller.fetchCourses();
               } else if (value == 'stats') {
                 _showStatisticsDialog();
               } else if (value == 'injections') {
@@ -238,264 +247,282 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildProgressCard() {
-    return Card(
-      margin: const EdgeInsets.all(12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              '📊 Прогресс лечения',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+    return Obx(() {
+      // Если данные загружаются
+      if (_controller.isLoading.value) {
+        return const Center(child: CircularProgressIndicator());
+      }
+
+      // Если курсов нет вообще
+      if (_controller.courses.isEmpty) {
+        return Card(
+          margin: const EdgeInsets.all(12),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                const Text(
+                  '📊 Прогресс лечения',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 20),
+                const Icon(
+                  Icons.medical_services,
+                  size: 64,
+                  color: Colors.grey,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Нет активных курсов',
+                  style: TextStyle(fontSize: 16, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    Get.to(() => const MedicationsScreen());
+                  },
+                  child: const Text('Добавить курс лечения'),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
+          ),
+        );
+      }
 
-            // ТАБЛЕТКИ - ОБЪЕДИНЕННАЯ ИНФОРМАЦИЯ
-            Obx(() {
-              // Находим все курсы для таблеток
-              final pillCourses = _controller.courses.where((course) {
-                final medication = _controller.medications.firstWhereOrNull(
-                  (m) => m.id == course.medicationId,
-                );
-                return medication != null &&
-                    (medication.type == MedicationDbType.pill ||
-                        medication.type == MedicationDbType.both) &&
-                    course.isActive;
-              }).toList();
+      return Card(
+        margin: const EdgeInsets.all(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '📊 Прогресс лечения',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              // ТАБЛЕТКИ - ОБЪЕДИНЕННАЯ ИНФОРМАЦИЯ
+              Obx(() {
+                // Находим все курсы для таблеток
+                final pillCourses = _controller.courses.where((course) {
+                  final medication = _controller.medications.firstWhereOrNull(
+                    (m) => m.id == course.medicationId,
+                  );
+                  return medication != null &&
+                      (medication.type == MedicationDbType.pill ||
+                          medication.type == MedicationDbType.both) &&
+                      course.isActive;
+                }).toList();
 
-              if (pillCourses.isEmpty) {
-                return Container(); // Не показываем если нет активных курсов таблеток
-              }
+                if (pillCourses.isEmpty) {
+                  return Container();
+                }
 
-              // Считаем общее количество оставшихся таблеток
-              int totalPillsLeft = 0;
-              for (final course in pillCourses) {
-                totalPillsLeft += getPillsLeftForMedication(
-                  course.medicationId,
-                );
-              }
+                // Считаем общее количество оставшихся таблеток
+                int totalPillsLeft = 0;
+                for (final course in pillCourses) {
+                  totalPillsLeft += getPillsLeftForMedication(
+                    course.medicationId,
+                  );
+                }
 
-              // Находим ближайшую дату окончания курса
-              DateTime? nearestEndDate;
-              for (final course in pillCourses) {
-                final endDate = course.endDate;
-                if (endDate != null) {
-                  if (nearestEndDate == null ||
-                      endDate.isBefore(nearestEndDate)) {
-                    nearestEndDate = endDate;
+                // Находим ближайшую дату окончания курса
+                DateTime? nearestEndDate;
+                for (final course in pillCourses) {
+                  final endDate = course.endDate;
+                  if (endDate != null) {
+                    if (nearestEndDate == null ||
+                        endDate.isBefore(nearestEndDate)) {
+                      nearestEndDate = endDate;
+                    }
                   }
                 }
-              }
 
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        '💊 Таблетки',
-                        style: TextStyle(fontWeight: FontWeight.w500),
-                      ),
-                      Text(
-                        'Осталось: $totalPillsLeft',
-                        style: TextStyle(
-                          color: totalPillsLeft < 10
-                              ? Colors.red
-                              : Colors.green,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  LinearProgressIndicator(
-                    value: _controller.pillsProgress,
-                    backgroundColor: Colors.grey.shade200,
-                    color: Colors.blue,
-                    minHeight: 8,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  const SizedBox(height: 4),
-                  if (nearestEndDate != null)
-                    Text(
-                      '${(_controller.pillsProgress * 100).toStringAsFixed(1)}% (до ${DateFormat('dd.MM.yyyy').format(nearestEndDate)})',
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  if (nearestEndDate == null)
-                    Text(
-                      '${(_controller.pillsProgress * 100).toStringAsFixed(1)}%',
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  const SizedBox(height: 16),
-                ],
-              );
-            }),
-
-            // УКОЛЫ - ОБЪЕДИНЕННАЯ ИНФОРМАЦИЯ
-            Obx(() {
-              // Находим все курсы для уколов
-              final injectionCourses = _controller.courses.where((course) {
-                final medication = _controller.medications.firstWhereOrNull(
-                  (m) => m.id == course.medicationId,
-                );
-                return medication != null &&
-                    (medication.type == MedicationDbType.injection ||
-                        medication.type == MedicationDbType.both) &&
-                    course.isActive;
-              }).toList();
-
-              if (injectionCourses.isEmpty) {
-                return Container(); // Не показываем если нет активных курсов уколов
-              }
-
-              // Общее количество выполненных уколов
-              final totalInjectionCount = _controller.injectionCount;
-
-              // Находим курс с ближайшим уколом
-              DateTime? nearestInjectionDate;
-              MedicationCourse? nearestCourse;
-
-              for (final course in injectionCourses) {
-                final nextInjection = _controller.getNextInjectionForMedication(
-                  course.medicationId,
-                );
-                if (nextInjection != null &&
-                    (nearestInjectionDate == null ||
-                        nextInjection.isBefore(nearestInjectionDate))) {
-                  nearestInjectionDate = nextInjection;
-                  nearestCourse = course;
-                }
-              }
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        '💉 Уколы',
-                        style: TextStyle(fontWeight: FontWeight.w500),
-                      ),
-                      Text(
-                        '$totalInjectionCount выполнено',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-
-                  // Информация о курсе уколов
-                  if (nearestCourse != null)
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
+                        const Text(
+                          '💊 Таблетки',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
                         Text(
-                          'Курс: ${nearestCourse.injectionInfo}',
-                          style: const TextStyle(fontSize: 14),
+                          'Осталось: $totalPillsLeft',
+                          style: TextStyle(
+                            color: totalPillsLeft < 10
+                                ? Colors.red
+                                : Colors.green,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                        const SizedBox(height: 4),
                       ],
                     ),
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(
+                      value: _controller.pillsProgress,
+                      backgroundColor: Colors.grey.shade200,
+                      color: Colors.blue,
+                      minHeight: 8,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    const SizedBox(height: 4),
+                    if (nearestEndDate != null)
+                      Text(
+                        '${(_controller.pillsProgress * 100).toStringAsFixed(1)}% (до ${DateFormat('dd.MM.yyyy').format(nearestEndDate)})',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    if (nearestEndDate == null)
+                      Text(
+                        '${(_controller.pillsProgress * 100).toStringAsFixed(1)}%',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                  ],
+                );
+              }),
+              // УКОЛЫ - ОБЪЕДИНЕННАЯ ИНФОРМАЦИЯ
+              Obx(() {
+                // Находим все курсы для уколов
+                final injectionCourses = _controller.courses.where((course) {
+                  final medication = _controller.medications.firstWhereOrNull(
+                    (m) => m.id == course.medicationId,
+                  );
+                  return medication != null &&
+                      (medication.type == MedicationDbType.injection ||
+                          medication.type == MedicationDbType.both) &&
+                      course.isActive;
+                }).toList();
 
-                  // Следующий укол
-                  if (nearestInjectionDate != null)
-                    Column(
+                if (injectionCourses.isEmpty) {
+                  return Container();
+                }
+
+                // Общее количество выполненных уколов
+                final totalInjectionCount = _controller.injectionCount;
+
+                // Находим курс с ближайшим уколом
+                DateTime? nearestInjectionDate;
+                MedicationCourse? nearestCourse;
+                for (final course in injectionCourses) {
+                  final nextInjection = _controller
+                      .getNextInjectionForMedication(course.medicationId);
+                  if (nextInjection != null &&
+                      (nearestInjectionDate == null ||
+                          nextInjection.isBefore(nearestInjectionDate))) {
+                    nearestInjectionDate = nextInjection;
+                    nearestCourse = course;
+                  }
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Следующий укол:',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    //   color: Colors.grey.shade700,
-                                  ),
-                                ),
-                                Text(
-                                  DateFormat(
-                                    'dd.MM.yyyy',
-                                  ).format(nearestInjectionDate),
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.green,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: _controller.daysUntilNextInjection <= 3
-                                    ? Colors.orange.shade100
-                                    : _controller.daysUntilNextInjection <= 7
-                                    ? Colors.yellow.shade100
-                                    : Colors.green.shade100,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                _controller.daysUntilNextInjection > 0
-                                    ? 'Через ${_controller.daysUntilNextInjection} ${_getDayWord(_controller.daysUntilNextInjection)}'
-                                    : 'Сегодня!',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: _controller.daysUntilNextInjection <= 3
-                                      ? Colors.orange.shade800
-                                      : _controller.daysUntilNextInjection <= 7
-                                      ? Colors.yellow.shade800
-                                      : Colors.green.shade800,
-                                ),
-                              ),
-                            ),
-                          ],
+                        const Text(
+                          '💉 Уколы',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                        Text(
+                          '$totalInjectionCount выполнено',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green,
+                          ),
                         ),
                       ],
                     ),
-
-                  const SizedBox(height: 16),
-                ],
-              );
-            }),
-
-            // ОБЩИЙ СТАТУС (если нет активных курсов)
-            Obx(() {
-              final hasActiveCourses = _controller.courses.any(
-                (course) => course.isActive,
-              );
-              if (hasActiveCourses) return Container();
-
-              return Column(
-                children: [
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Нет активных курсов лечения',
-                    style: TextStyle(color: Colors.grey, fontSize: 14),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Добавьте препарат и настройте курс лечения',
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                  ),
-                ],
-              );
-            }),
-          ],
+                    const SizedBox(height: 8),
+                    // Информация о курсе уколов
+                    if (nearestCourse != null)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Курс: ${nearestCourse.injectionInfo}',
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                        ],
+                      ),
+                    // Следующий укол
+                    if (nearestInjectionDate != null)
+                      Column(
+                        children: [
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Следующий укол:',
+                                    style: TextStyle(fontSize: 14),
+                                  ),
+                                  Text(
+                                    DateFormat(
+                                      'dd.MM.yyyy',
+                                    ).format(nearestInjectionDate),
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.green,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _controller.daysUntilNextInjection <= 3
+                                      ? Colors.orange.shade100
+                                      : _controller.daysUntilNextInjection <= 7
+                                      ? Colors.yellow.shade100
+                                      : Colors.green.shade100,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  _controller.daysUntilNextInjection > 0
+                                      ? 'Через ${_controller.daysUntilNextInjection} ${_getDayWord(_controller.daysUntilNextInjection)}'
+                                      : 'Сегодня!',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color:
+                                        _controller.daysUntilNextInjection <= 3
+                                        ? Colors.orange.shade800
+                                        : _controller.daysUntilNextInjection <=
+                                              7
+                                        ? Colors.yellow.shade800
+                                        : Colors.green.shade800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    const SizedBox(height: 16),
+                  ],
+                );
+              }),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    });
   }
 
   String _getDayWord(int days) {
@@ -558,7 +585,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   ),
                   const SizedBox(height: 16),
-
                   // Выбор препарата
                   DropdownButtonFormField<Medication?>(
                     value: selectedMedication,
@@ -597,7 +623,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-
                   // Выбор типа
                   DropdownButtonFormField<MedicationType>(
                     value: selectedType,
@@ -634,7 +659,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-
                   // Место укола (если нужно)
                   if (selectedType == MedicationType.injection ||
                       selectedType == MedicationType.both)
@@ -712,13 +736,11 @@ class _HomeScreenState extends State<HomeScreen> {
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 16),
-
             // Выбор препарата
             Obx(() {
               final medications = _controller.getMedicationsByType(
                 _controller.selectedType.value,
               );
-
               if (medications.isNotEmpty) {
                 return DropdownButtonFormField<Medication?>(
                   value: _controller.selectedMedication.value,
@@ -750,7 +772,6 @@ class _HomeScreenState extends State<HomeScreen> {
               return Container();
             }),
             const SizedBox(height: 12),
-
             // Тип медикамента
             DropdownButtonFormField<MedicationType>(
               value: _controller.selectedType.value,
@@ -783,7 +804,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 12),
-
             // Место укола (только для уколов)
             Obx(() {
               if (_controller.selectedType.value == MedicationType.injection ||
@@ -818,7 +838,6 @@ class _HomeScreenState extends State<HomeScreen> {
               return Container();
             }),
             const SizedBox(height: 16),
-
             // Кнопка добавления
             ElevatedButton(
               onPressed: () {
@@ -870,7 +889,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onRefresh: () => _controller.fetchRecords(),
         child: ListView.builder(
           controller: _historyScrollController,
-          physics: const AlwaysScrollableScrollPhysics(), // ← ДОБАВИТЬ
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           itemCount: _controller.records.length,
           itemBuilder: (context, index) {

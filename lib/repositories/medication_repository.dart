@@ -4,7 +4,6 @@ import 'package:intl/intl.dart';
 import 'package:medication_tracker/models/medication.dart';
 import 'package:medication_tracker/models/medication_course.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
 import '../models/medication_record.dart';
 
 class MedicationRepository {
@@ -23,12 +22,10 @@ class MedicationRepository {
       return response
           .map((item) {
             final record = MedicationRecord.fromMap(item);
-
             // Если есть связанный препарат
             if (item['medications'] != null && item['medications'] is Map) {
               record.medication = Medication.fromMap(item['medications']);
             }
-
             return record;
           })
           .toList()
@@ -67,6 +64,7 @@ class MedicationRepository {
           .select()
           .eq('id', recordId)
           .single();
+
       return MedicationRecord.fromMap(response);
     } catch (e) {
       print('Error getting record by id: $e');
@@ -102,14 +100,11 @@ class MedicationRepository {
           .eq('user_id', userId);
 
       final Map<String, int> result = {};
-
       for (final record in response) {
         final date = DateTime.parse(record['date_time'] as String);
         final dateString = DateFormat('yyyy-MM-dd').format(date);
-
         result.update(dateString, (value) => value + 1, ifAbsent: () => 1);
       }
-
       return result;
     } catch (e) {
       print('Error getting records by day: $e');
@@ -204,10 +199,29 @@ class MedicationRepository {
     }
   }
 
+  // Получить все курсы пользователя (НОВЫЙ МЕТОД)
+  Future<List<MedicationCourse>> getAllCourses(String userId) async {
+    try {
+      final response = await _client
+          .from('medication_courses')
+          .select()
+          .eq('user_id', userId)
+          .order('updated_at', ascending: false);
+
+      return response
+          .map((item) => MedicationCourse.fromMap(item))
+          .toList()
+          .cast<MedicationCourse>();
+    } catch (e) {
+      print('Error getting all courses: $e');
+      return [];
+    }
+  }
+
   // Получить курс для препарата
   Future<MedicationCourse?> getMedicationCourse(String medicationId) async {
     try {
-      final userId = Supabase.instance.client.auth.currentUser?.id;
+      final userId = _client.auth.currentUser?.id;
       if (userId == null) return null;
 
       final response = await _client
@@ -218,7 +232,6 @@ class MedicationRepository {
           .maybeSingle();
 
       if (response == null) return null;
-
       return MedicationCourse.fromMap(response);
     } catch (e) {
       print('Error getting medication course: $e');
@@ -262,7 +275,7 @@ class MedicationRepository {
 
         print('📊 Данные для обновления: ${updatedCourse.toMap()}');
 
-        // Используем update вместо upsert для обновления существующего курса
+        // Используем update для обновления существующего курса
         final response = await _client
             .from('medication_courses')
             .update(updatedCourse.toMap())
@@ -305,8 +318,9 @@ class MedicationRepository {
         print('✅ Новый курс успешно создан');
         return MedicationCourse.fromMap(response);
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('❌ Ошибка в MedicationRepository.saveMedicationCourse(): $e');
+      print('Stack trace: $stackTrace');
 
       // Если возникает ошибка уникальности, пробуем альтернативный подход
       if (e.toString().contains('23505') ||
@@ -317,6 +331,72 @@ class MedicationRepository {
         return await _saveMedicationCourseAlternative(course);
       }
 
+      // Если возникает ошибка check constraint
+      if (e.toString().contains('23514')) {
+        print('🔄 Пробую сохранить курс с очищенными полями для уколов...');
+        return await _saveMedicationCourseWithoutInjectionFields(course);
+      }
+
+      rethrow;
+    }
+  }
+
+  // Метод сохранения курса без полей для уколов (для таблеток)
+  Future<MedicationCourse> _saveMedicationCourseWithoutInjectionFields(
+    MedicationCourse course,
+  ) async {
+    try {
+      print(
+        '🔄 _saveMedicationCourseWithoutInjectionFields: Сохраняю курс без полей уколов',
+      );
+
+      // Создаем курс без полей для уколов
+      final cleanCourse = MedicationCourse(
+        id: course.id,
+        userId: course.userId,
+        medicationId: course.medicationId,
+        startDate: course.startDate,
+        durationType: course.durationType,
+        customEndDate: course.customEndDate,
+        pillsPerDay: course.pillsPerDay,
+        totalPills: course.totalPills,
+        hasNotifications: course.hasNotifications,
+        createdAt: course.createdAt,
+        updatedAt: DateTime.now(),
+        // Оставляем null для полей уколов
+        injectionFrequency: null,
+        injectionIntervalDays: null,
+        injectionDaysOfWeek: null,
+        injectionNotifyDayBefore: null,
+      );
+
+      // Проверяем существующий курс
+      final existingCourse = await getMedicationCourse(course.medicationId);
+
+      if (existingCourse != null) {
+        // Обновляем существующий
+        final response = await _client
+            .from('medication_courses')
+            .update(cleanCourse.toMap())
+            .eq('id', existingCourse.id)
+            .select()
+            .single();
+
+        print('✅ Курс успешно обновлен без полей уколов');
+        return MedicationCourse.fromMap(response);
+      } else {
+        // Создаем новый
+        final response = await _client
+            .from('medication_courses')
+            .insert(cleanCourse.toMap())
+            .select()
+            .single();
+
+        print('✅ Курс успешно создан без полей уколов');
+        return MedicationCourse.fromMap(response);
+      }
+    } catch (e) {
+      print('❌ Ошибка в _saveMedicationCourseWithoutInjectionFields: $e');
       rethrow;
     }
   }
@@ -331,7 +411,7 @@ class MedicationRepository {
       );
 
       // Получаем user_id
-      final userId = Supabase.instance.client.auth.currentUser?.id;
+      final userId = _client.auth.currentUser?.id;
       if (userId == null) {
         throw Exception('Пользователь не авторизован');
       }
@@ -343,13 +423,14 @@ class MedicationRepository {
             .delete()
             .eq('medication_id', course.medicationId)
             .eq('user_id', userId);
+
         print('🗑️ Удален существующий курс перед созданием нового');
       } catch (deleteError) {
         print('ℹ️ Не удалось удалить существующий курс: $deleteError');
         // Продолжаем в любом случае
       }
 
-      // Создаем новый курс
+      // Создаем новый курс с правильными полями
       final newCourse = MedicationCourse(
         id: '',
         userId: course.userId,
@@ -389,6 +470,34 @@ class MedicationRepository {
     } catch (e) {
       print('Error deleting medication course: $e');
       rethrow;
+    }
+  }
+
+  // Удалить курс по medicationId
+  Future<void> deleteCourseByMedicationId(String medicationId) async {
+    try {
+      final userId = _client.auth.currentUser?.id;
+      if (userId == null) return;
+
+      await _client
+          .from('medication_courses')
+          .delete()
+          .eq('medication_id', medicationId)
+          .eq('user_id', userId);
+    } catch (e) {
+      print('Error deleting course by medication id: $e');
+      rethrow;
+    }
+  }
+
+  // Получить активные курсы
+  Future<List<MedicationCourse>> getActiveCourses(String userId) async {
+    try {
+      final allCourses = await getAllCourses(userId);
+      return allCourses.where((course) => course.isActive).toList();
+    } catch (e) {
+      print('Error getting active courses: $e');
+      return [];
     }
   }
 }

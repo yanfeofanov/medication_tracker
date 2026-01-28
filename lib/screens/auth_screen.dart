@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:flutter/services.dart'; // ← ДОБАВИТЬ ЭТОТ ИМПОРТ
 import '../services/supabase_service.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -55,9 +56,6 @@ class _AuthScreenState extends State<AuthScreen> {
         await SupabaseService.signIn(email, password);
 
         print('✅ Вход успешен, пользователь будет перенаправлен автоматически');
-
-        // Не показываем снекбар - пользователь будет автоматически перенаправлен
-        // на HomeScreen через AuthWrapper
       }
     } catch (e) {
       print('❌ Ошибка ${_isSignUp ? 'регистрации' : 'входа'}: $e');
@@ -88,6 +86,33 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  // Метод для проверки существования asset
+  Future<bool> _checkAssetExists(String path) async {
+    try {
+      await rootBundle.load(path);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Можно проверить assets при инициализации
+    _checkAssets();
+  }
+
+  Future<void> _checkAssets() async {
+    print('🔍 Проверка assets...');
+    final assets = ['assets/images/logo.png', 'assets/icon/icon.png'];
+
+    for (final asset in assets) {
+      final exists = await _checkAssetExists(asset);
+      print('${exists ? '✅' : '❌'} $asset');
+    }
+  }
+
   @override
   void dispose() {
     _emailController.dispose();
@@ -110,11 +135,7 @@ class _AuthScreenState extends State<AuthScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // Логотип
-                Icon(
-                  Icons.medical_services,
-                  size: 80,
-                  color: Theme.of(context).primaryColor,
-                ),
+                _buildAuthLogo(),
                 const SizedBox(height: 20),
 
                 // Заголовок
@@ -208,6 +229,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
                   ),
                   child: _isLoading
                       ? const SizedBox(
@@ -260,6 +282,77 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildAuthLogo() {
+    return Column(
+      children: [
+        // Контейнер для логотипа
+        Container(
+          width: 100,
+          height: 100,
+          margin: const EdgeInsets.only(bottom: 10),
+          decoration: BoxDecoration(
+            color: Theme.of(context).primaryColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(50),
+            border: Border.all(
+              color: Theme.of(context).primaryColor.withOpacity(0.3),
+              width: 2,
+            ),
+          ),
+          child: Center(child: _loadLogoImage()),
+        ),
+        // Текст отладки под логотипом
+        FutureBuilder<bool>(
+          future: _checkAssetExists('assets/images/logo.png'),
+          builder: (context, snapshot) {
+            if (snapshot.hasData && !snapshot.data!) {
+              return const Text(
+                'Файл не найден, используется fallback',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 10, color: Colors.red),
+              );
+            }
+            return Container();
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _loadLogoImage() {
+    try {
+      return Image.asset(
+        'assets/images/logo.png',
+        width: 70,
+        height: 70,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) {
+          print('❌ AuthScreen: Ошибка загрузки логотипа: $error');
+          print('Stack trace: $stackTrace');
+          return _buildFallbackLogo();
+        },
+      );
+    } catch (e) {
+      print('❌ AuthScreen: Исключение при загрузке логотипа: $e');
+      return _buildFallbackLogo();
+    }
+  }
+
+  Widget _buildFallbackLogo() {
+    return Container(
+      width: 70,
+      height: 70,
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(35),
+      ),
+      child: Icon(
+        Icons.medical_services,
+        size: 40,
+        color: Theme.of(context).primaryColor,
       ),
     );
   }

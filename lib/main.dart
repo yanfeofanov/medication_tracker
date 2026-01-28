@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
+import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:medication_tracker/config.dart';
@@ -30,10 +31,30 @@ Future<void> main() async {
     );
     print('✅ main(): Supabase успешно инициализирован');
 
-    // Инициализация уведомлений
+    // Инициализация уведомлений с расширенной настройкой
     print('🔄 main(): Инициализация уведомлений...');
-    await NotificationService.initialize();
-    print('✅ main(): Уведомления успешно инициализированы');
+
+    await AwesomeNotifications().initialize(null, [
+      NotificationChannel(
+        channelKey: 'medication_reminders',
+        channelName: 'Напоминания о лекарствах',
+        channelDescription: 'Уведомления о приеме лекарств и уколах',
+        defaultColor: const Color(0xFF2196F3),
+        ledColor: Colors.white,
+        importance: NotificationImportance.High,
+        channelShowBadge: true,
+        locked: true,
+        defaultPrivacy: NotificationPrivacy.Public,
+      ),
+    ]);
+
+    // Двойная проверка разрешений уведомлений
+    final isAllowed = await AwesomeNotifications().isNotificationAllowed();
+    if (!isAllowed) {
+      await AwesomeNotifications().requestPermissionToSendNotifications();
+    }
+
+    print('✅ main(): Уведомления успешно настроены');
   } catch (e, stackTrace) {
     print('❌ main(): ОШИБКА инициализации: $e');
     print('Stack trace: $stackTrace');
@@ -72,7 +93,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
   bool _isInitializing = true;
   bool _isAuthenticated = false;
   String _userEmail = '';
-
   late StreamSubscription<AuthState> _authStateSubscription;
 
   @override
@@ -186,13 +206,47 @@ class _AuthWrapperState extends State<AuthWrapper> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.medical_services, size: 80, color: Colors.blue.shade700),
-            const SizedBox(height: 20),
+            // Логотип с отладкой
+            Container(
+              width: 150,
+              height: 150,
+              decoration: BoxDecoration(
+                color: Colors.blue.shade100,
+                borderRadius: BorderRadius.circular(75),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.blue.withOpacity(0.3),
+                    blurRadius: 10,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: Stack(
+                children: [
+                  // Фоновый контур
+                  Positioned.fill(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(75),
+                        border: Border.all(
+                          color: Colors.blue.shade200,
+                          width: 3,
+                        ),
+                      ),
+                    ),
+                  ),
+                  // Изображение
+                  Center(child: _buildLogo()),
+                ],
+              ),
+            ),
+            const SizedBox(height: 30),
             const Text(
               'Medication\nTracker',
               textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: 28,
+                fontSize: 32,
                 fontWeight: FontWeight.bold,
                 color: Colors.blue,
               ),
@@ -207,6 +261,39 @@ class _AuthWrapperState extends State<AuthWrapper> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildLogo() {
+    try {
+      return Image.asset(
+        'assets/images/logo.png',
+        width: 120,
+        height: 120,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) {
+          print('❌ Ошибка загрузки логотипа: $error');
+          print('Stack trace: $stackTrace');
+          return _buildFallbackLogo();
+        },
+      );
+    } catch (e) {
+      print('❌ Исключение при загрузке логотипа: $e');
+      return _buildFallbackLogo();
+    }
+  }
+
+  Widget _buildFallbackLogo() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.medical_services, size: 80, color: Colors.blue.shade700),
+        const SizedBox(height: 8),
+        const Text(
+          'Логотип',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      ],
     );
   }
 
