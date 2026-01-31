@@ -248,28 +248,11 @@ class MedicationCourse {
     final now = DateTime.now();
     if (now.isAfter(end)) return 0;
 
-    // Рассчитываем сколько дней осталось
+    // Рассчитываем сколько дней осталось до конца курса
     final daysLeft = end.difference(now).inDays;
 
-    // Учитываем уже принятые сегодня таблетки
-    final today = DateFormat('dd.MM.yyyy').format(now);
-    final pillsTakenToday = records
-        .where((record) => record.medicationId == medicationId)
-        .where(
-          (record) =>
-              record.medicationType == MedicationType.pill ||
-              record.medicationType == MedicationType.both,
-        )
-        .where((record) => record.dateOnly == today)
-        .length;
-
-    final pillsForToday = pillsTakenToday >= pillsPerDay! ? 0 : 1;
-
-    // Рассчитываем оставшиеся таблетки
-    final remainingPills = (daysLeft + pillsForToday) * pillsPerDay!;
-
-    // Вычитаем уже принятые таблетки
-    final allPillsTaken = records
+    // Вычисляем сколько таблеток уже принято за ВЕСЬ курс
+    final pillsTaken = records
         .where((record) => record.medicationId == medicationId)
         .where(
           (record) =>
@@ -278,8 +261,15 @@ class MedicationCourse {
         )
         .length;
 
-    final result = remainingPills - allPillsTaken;
-    return result < 0 ? 0 : result;
+    // Вычисляем общее количество таблеток за весь курс
+    final start = startDate.isAfter(now) ? startDate : now;
+    final totalDaysInCourse = end.difference(start).inDays;
+    final totalPillsInCourse = (totalDaysInCourse + 1) * pillsPerDay!;
+
+    // Количество оставшихся таблеток
+    final remainingPills = totalPillsInCourse - pillsTaken;
+
+    return remainingPills < 0 ? 0 : remainingPills;
   }
 
   // Рассчитать дату следующего укола
