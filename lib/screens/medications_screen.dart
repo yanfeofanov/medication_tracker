@@ -601,6 +601,23 @@ class _MedicationsScreenState extends State<MedicationsScreen> {
                     injectionNotifyDayBefore: _notifyDayBefore,
                   );
 
+                  // ДОБАВЛЕНО: Показать сообщение об успешной настройке уведомлений
+                  if (_enableNotifications) {
+                    Get.snackbar(
+                      '✅ Уведомления настроены',
+                      'Вы будете получать напоминания о приеме лекарства',
+                      backgroundColor: Colors.green,
+                      colorText: Colors.white,
+                    );
+                  } else {
+                    Get.snackbar(
+                      'ℹ️ Уведомления отключены',
+                      'Вы не будете получать напоминания',
+                      backgroundColor: Colors.blue,
+                      colorText: Colors.white,
+                    );
+                  }
+
                   Navigator.pop(context);
                 },
                 child: const Text('Сохранить'),

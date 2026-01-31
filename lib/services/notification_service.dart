@@ -3,8 +3,11 @@
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
+import 'package:medication_tracker/models/medication.dart';
 import 'package:medication_tracker/models/medication_course.dart';
+import 'dart:math';
 import 'package:medication_tracker/models/medication_record.dart';
+import 'package:collection/collection.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class NotificationService {
@@ -157,45 +160,50 @@ class NotificationService {
 
       // Уведомление за день до (если включено)
       if (course.injectionNotifyDayBefore ?? true) {
-        final DateTime reminderDate = nextInjectionDate.subtract(
-          const Duration(days: 1),
-        );
+        // Напоминания за 1, 2, 3 дня
+        final List<int> reminderDays = [1, 2, 3];
 
-        // Устанавливаем время напоминания на 9 утра
-        final DateTime reminderDateTime = DateTime(
-          reminderDate.year,
-          reminderDate.month,
-          reminderDate.day,
-          9,
-          0,
-        );
-
-        // Проверяем, что дата не в прошлом
-        if (reminderDateTime.isAfter(DateTime.now())) {
-          print(
-            '📅 NotificationService: Уведомление за день до: ${DateFormat('dd.MM.yyyy HH:mm').format(reminderDateTime)}',
+        for (final int days in reminderDays) {
+          final DateTime reminderDate = nextInjectionDate.subtract(
+            Duration(days: days),
           );
 
-          await AwesomeNotifications().createNotification(
-            content: NotificationContent(
-              id: _generateNotificationId(
-                'injection_day_before_${course.medicationId}',
+          // Устанавливаем время напоминания на 9 утра
+          final DateTime reminderDateTime = DateTime(
+            reminderDate.year,
+            reminderDate.month,
+            reminderDate.day,
+            9,
+            0,
+          );
+
+          // Проверяем, что дата не в прошлом
+          if (reminderDateTime.isAfter(DateTime.now())) {
+            print(
+              '📅 Уведомление за $days ${_getDayWord(days)} до: ${DateFormat('dd.MM.yyyy HH:mm').format(reminderDateTime)}',
+            );
+
+            await AwesomeNotifications().createNotification(
+              content: NotificationContent(
+                id: _generateNotificationId(
+                  'injection_${days}_days_before_${course.medicationId}',
+                ),
+                channelKey: channelKey,
+                title: '💉 Напоминание об уколе',
+                body:
+                    'Через $days ${_getDayWord(days)} необходимо сделать укол $medicationName',
+                notificationLayout: NotificationLayout.Default,
+                autoDismissible: false,
               ),
-              channelKey: channelKey,
-              title: '💉 Напоминание об уколе завтра',
-              body: 'Завтра необходимо сделать укол $medicationName',
-              notificationLayout: NotificationLayout.Default,
-              autoDismissible: false,
-            ),
-            schedule: NotificationCalendar.fromDate(
-              date: reminderDateTime,
-              allowWhileIdle: true,
-              preciseAlarm: true,
-            ),
-          );
-          print('✅ NotificationService: Уведомление за день до запланировано');
-        } else {
-          print('⚠️ Дата напоминания уже прошла, пропускаем');
+              schedule: NotificationCalendar.fromDate(
+                date: reminderDateTime,
+                allowWhileIdle: true,
+                preciseAlarm: true,
+              ),
+            );
+          } else {
+            print('⚠️ Дата напоминания за $days дней уже прошла, пропускаем');
+          }
         }
       }
 
@@ -549,6 +557,112 @@ class NotificationService {
       print(
         '  - ID: ${notification.content?.id}, Title: ${notification.content?.title}',
       );
+    }
+  }
+
+  static Future<void> scheduleAllNotificationsForCourses(
+    List<MedicationCourse> courses,
+    List<Medication> medications,
+  ) async {
+    try {
+      print(
+        '🔄 NotificationService: Начинаю планирование уведомлений для всех курсов',
+      );
+
+      // Сначала очищаем все старые уведомления
+      await cancelAllNotifications();
+
+      int scheduledCount = 0;
+
+      for (final course in courses) {
+        // Планируем только для активных курсов с включенными уведомлениями
+        if (course.isActive && course.hasNotifications) {
+          final medication = medications.firstWhereOrNull(
+            (m) => m.id == course.medicationId,
+          );
+
+          if (medication == null) continue;
+
+          // Для ТАБЛЕТОК
+          if (course.isPillCourse) {
+            await schedulePillNotifications(course, medication.name);
+            scheduledCount++;
+            print(
+              '✅ Запланированы уведомления для таблеток: ${medication.name}',
+            );
+          }
+
+          // Для УКОЛОВ
+          if (course.isInjectionCourse) {
+            await scheduleInjectionNotifications(course, medication.name);
+            scheduledCount++;
+            print('✅ Запланированы уведомления для уколов: ${medication.name}');
+          }
+        }
+      }
+
+      print('✅ Всего запланировано уведомлений для $scheduledCount курсов');
+
+      // Для отладки выводим список запланированных уведомлений
+      await listScheduledNotifications();
+    } catch (e, stackTrace) {
+      print('❌ Ошибка при планировании всех уведомлений: $e');
+      print('Stack trace: $stackTrace');
+    }
+  }
+
+  // Запланировать ежедневные уведомления для таблеток
+  static Future<void> schedulePillNotifications(
+    MedicationCourse course,
+    String medicationName,
+  ) async {
+    try {
+      print(
+        '🔄 NotificationService: Начинаю планирование уведомлений для таблеток препарата: $medicationName',
+      );
+
+      // Отменяем старые уведомления для этого препарата
+      await cancelAllNotificationsForMedication(course.medicationId);
+
+      // Если уведомления не включены, выходим
+      if (!course.hasNotifications) {
+        print('⚠️ NotificationService: Уведомления для курса отключены');
+        return;
+      }
+
+      // Если нет информации о количестве таблеток в день, выходим
+      if (course.pillsPerDay == null || course.pillsPerDay! <= 0) {
+        print('⚠️ NotificationService: Не указано количество таблеток в день');
+        return;
+      }
+
+      // Время уведомлений (например: 9:00, 14:00, 20:00)
+      final List<TimeOfDay> reminderTimes = [
+        const TimeOfDay(hour: 9, minute: 0),
+        const TimeOfDay(hour: 14, minute: 0),
+        const TimeOfDay(hour: 20, minute: 0),
+      ];
+
+      // Создаем уведомления на основе pillsPerDay
+      for (int i = 0; i < min(course.pillsPerDay!, reminderTimes.length); i++) {
+        final time = reminderTimes[i];
+
+        // Запланировать ежедневное уведомление
+        await scheduleDailyNotification(
+          id: 'pill_${course.medicationId}_$i',
+          title: '💊 Время принять лекарство',
+          body: 'Пора принять $medicationName',
+          hour: time.hour,
+          minute: time.minute,
+          startDate: course.startDate,
+          endDate: course.endDate,
+        );
+      }
+
+      print('✅ NotificationService: Уведомления для таблеток запланированы');
+    } catch (e, stackTrace) {
+      print('❌ NotificationService.schedulePillNotifications(): Ошибка: $e');
+      print('Stack trace: $stackTrace');
     }
   }
 }

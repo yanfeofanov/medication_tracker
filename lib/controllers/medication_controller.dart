@@ -94,14 +94,30 @@ class MedicationController extends GetxController {
     try {
       await fetchRecords();
       await fetchMedications();
-      await fetchCourses(); // Добавляем загрузку курсов
+      await fetchCourses();
       _setupRealtimeUpdates();
-      _updateProgress(); // Обновляем прогресс после загрузки всех данных
+      _updateProgress();
+
+      // ДОБАВЛЕНО: Планирование уведомлений для всех активных курсов
+      if (courses.isNotEmpty) {
+        print('🔄 Начинаю планирование уведомлений для активных курсов');
+        await NotificationService.scheduleAllNotificationsForCourses(
+          courses.where((c) => c.isActive).toList(),
+          medications,
+        );
+      }
+
       print('✅ MedicationController._loadData(): Данные успешно загружены');
     } catch (e, stackTrace) {
       print('❌ MedicationController._loadData(): ОШИБКА загрузки данных: $e');
       print('Stack trace: $stackTrace');
     }
+    // Future.delayed(const Duration(seconds: 20), () {
+    //   NotificationService.showInstantNotification(
+    //     title: '🔔 Тест уведомлений',
+    //     body: 'Приложение успешно запущено! Уведомления настроены.',
+    //   );
+    // });
   }
 
   void _setupRealtimeUpdates() {
@@ -295,11 +311,15 @@ class MedicationController extends GetxController {
 
       // Если включены уведомления, создаем их
       if (hasNotifications) {
+        // Для ТАБЛЕТОК
         if (medication.type == MedicationDbType.pill ||
             medication.type == MedicationDbType.both) {
-          await _setupMedicationNotifications(savedCourse);
+          await _setupMedicationNotifications(
+            savedCourse,
+          ); // Используем исправленный метод
         }
 
+        // Для УКОЛОВ
         if (medication.type == MedicationDbType.injection ||
             medication.type == MedicationDbType.both) {
           await NotificationService.scheduleInjectionNotifications(
@@ -362,24 +382,28 @@ class MedicationController extends GetxController {
       // Удаляем старые уведомления для этого препарата
       await _cancelMedicationNotifications(course.medicationId);
 
-      // Создаем ежедневные уведомления только если есть pillsPerDay
-      if (course.pillsPerDay != null && course.pillsPerDay! > 0) {
-        for (int i = 0; i < course.pillsPerDay!; i++) {
-          // Например: уведомления в 9:00, 14:00, 20:00
-          final hour = i == 0 ? 9 : (i == 1 ? 14 : 20);
-          await NotificationService.scheduleDailyNotification(
-            id: '${course.medicationId}_$i',
-            title: '💊 Время принять лекарство',
-            body: 'Не забудьте принять ${medication.name}',
-            hour: hour,
-            minute: 0,
-            startDate: course.startDate,
-            endDate: course.endDate,
-          );
-        }
+      // Если уведомления выключены, выходим
+      if (!course.hasNotifications) return;
+
+      // Для ТАБЛЕТОК
+      if (course.isPillCourse) {
+        await NotificationService.schedulePillNotifications(
+          course,
+          medication.name,
+        );
       }
+
+      // Для УКОЛОВ
+      if (course.isInjectionCourse) {
+        await NotificationService.scheduleInjectionNotifications(
+          course,
+          medication.name,
+        );
+      }
+
+      print('✅ Уведомления настроены для ${medication.name}');
     } catch (e) {
-      print('Error setting up notifications: $e');
+      print('❌ Ошибка настройки уведомлений: $e');
     }
   }
 
@@ -768,6 +792,10 @@ class MedicationController extends GetxController {
       // Автоматически обновляем данные
       await fetchRecords();
       _updateProgress(); // Обновляем прогресс
+      if (selectedType.value == MedicationType.injection ||
+          selectedType.value == MedicationType.both) {
+        await _rescheduleInjectionNotifications();
+      }
     } catch (e) {
       print('❌ Ошибка добавления записи: $e');
       Get.snackbar(
@@ -776,6 +804,34 @@ class MedicationController extends GetxController {
         backgroundColor: Colors.red,
         colorText: Colors.white,
       );
+    }
+  }
+
+  Future<void> _rescheduleInjectionNotifications() async {
+    try {
+      // Находим все активные курсы для уколов
+      final injectionCourses = courses.where((course) {
+        final medication = medications.firstWhereOrNull(
+          (m) => m.id == course.medicationId,
+        );
+        return course.isActive &&
+            course.hasNotifications &&
+            medication != null &&
+            (medication.type == MedicationDbType.injection ||
+                medication.type == MedicationDbType.both);
+      }).toList();
+
+      for (final course in injectionCourses) {
+        final medication = medications.firstWhere(
+          (m) => m.id == course.medicationId,
+        );
+        await NotificationService.scheduleInjectionNotifications(
+          course,
+          medication.name,
+        );
+      }
+    } catch (e) {
+      print('❌ Ошибка при перепланировании уведомлений: $e');
     }
   }
 

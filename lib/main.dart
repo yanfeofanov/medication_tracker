@@ -52,6 +52,9 @@ Future<void> main() async {
     final isAllowed = await AwesomeNotifications().isNotificationAllowed();
     if (!isAllowed) {
       await AwesomeNotifications().requestPermissionToSendNotifications();
+      print('⚠️ Разрешение на уведомления запрошено');
+    } else {
+      print('✅ Разрешение на уведомления уже получено');
     }
 
     print('✅ main(): Уведомления успешно настроены');
